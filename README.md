@@ -126,9 +126,16 @@ bash data/testdata/download.sh
 This will download:
 - `yolo26n-det-int8.tflite` (LiteRT / CPU detector)
 - `ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite` (Coral detector)
-- `mobilenet_v2_1.0_224_inat_bird_quant_edgetpu.tflite` (Bird classifier)
+- `ssdlite_mobiledet_coco_qat_postprocess.tflite` (CPU detector)
+- `mobilenet_v2_1.0_224_inat_bird_quant.tflite` (CPU bird classifier)
+- `mobilenet_v2_1.0_224_inat_bird_quant_edgetpu.tflite` (Coral bird classifier)
 - COCO and iNaturalist label files
-- Sample test images for E2E validation
+- Four pigeon test images for E2E validation
+
+Downloads skip existing nonempty files and use `.part` files so interrupted transfers
+are not mistaken for complete downloads. If an older download is corrupt, remove
+that file and rerun the script. YOLO26 uses the generic TFLite export from
+[EdgeFirst](https://huggingface.co/EdgeFirst/yolo26-det), pinned to a revision.
 
 ---
 
@@ -156,8 +163,47 @@ pigeon -i 0 --detector yolo26
 - `-k`, `--top_k`: Number of top classification candidates to check (default: `2`).
 - `--fps`: Output video FPS (default: `1.0` for image directories, source fps for video).
 - `--loop`: Loops input video or image sequence.
-- `--benchmark`: Prints structured latency benchmark metrics upon completion.
+- `--benchmark`: Prints latency metrics and peak process resident memory (RSS) in MiB on Linux/WSL.
+- `--max-frames`: Stop after this many frames (use with `--loop` for a bounded benchmark).
 - `-v`, `--verbose`: `0` (warnings only), `1` (info), `2` (debug).
+
+---
+
+## WSL CPU quick start and memory measurement
+
+Run from the project root. No camera or Coral device is required:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[tflite]"
+bash data/models/download.sh
+bash data/testdata/download.sh
+
+.venv/bin/pigeon -i data/testdata/pigeons --backend tflite --detector yolo26 \
+  --benchmark -o data/testdata/output/yolo26.mp4
+
+# Repeat a bounded workload; replace yolo26 with ssd to compare detectors.
+.venv/bin/pigeon -i data/testdata/pigeons --backend tflite --detector yolo26 \
+  --loop --max-frames 200 --benchmark -v 0
+```
+
+`Peak process memory (RSS)` includes Python, native libraries, model tensors,
+image decoding and any output encoding. It is the process high-water mark, not
+model file size or total WSL VM memory. Large original JPEGs are decoded before
+resizing, so use a representative video input when estimating camera memory use.
+Use `/usr/bin/time -v` before the command for an independent Linux measurement
+(`Maximum resident set size` is in KiB). Run the same command on the Raspberry Pi
+for its actual memory and speed; WSL timings do not predict Pi performance.
+The pipeline retains per-frame timings, so these bounded runs do not establish
+memory stability for an indefinitely running service.
+
+Annotated output is an MP4 file; no GUI window is needed on WSL.
+
+Example measured here on WSL (200 frames, 1280×720 MP4 made from the sample
+photos, CPU with four inference threads, no output encoding): YOLO26 peaked at
+203.4 MiB RSS and SSD at 173.4 MiB. The four original high-resolution JPEGs with
+output encoding peaked at 337.0 MiB and 318.5 MiB respectively. These are sample
+workloads, not Raspberry Pi measurements or long-running memory guarantees.
 
 ---
 

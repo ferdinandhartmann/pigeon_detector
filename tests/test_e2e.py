@@ -8,6 +8,7 @@ import unittest
 import cv2
 
 from pigeon.backends.edgetpu import list_available_tpus
+from pigeon.pipeline import VideoReader
 
 
 class TestE2E(unittest.TestCase):
@@ -22,7 +23,7 @@ class TestE2E(unittest.TestCase):
         self.test_images = [
             f
             for f in os.listdir(self.test_image_dir)
-            if f.lower().endswith((".png", ".jpg", ".jpeg"))
+            if f.lower().endswith(VideoReader.IMAGE_EXTENSIONS)
         ]
         if not self.test_images:
             self.skipTest("No supported images found in testdata directory.")

@@ -226,7 +226,11 @@ def yolo26(img_det, interpreter_detect, score_threshold, ratio, pad) -> list[Obj
     # quantize
     scale_i8, shift_i8 = input_details[0]["quantization"]
     img_det_float = np.array(img_det, dtype=np.float32) / 255.0
-    img_det_quant = np.array(img_det_float / scale_i8 + shift_i8, dtype=np.int8)
+    dtype = input_details[0]["dtype"]
+    limits = np.iinfo(dtype)
+    img_det_quant = np.clip(
+        np.rint(img_det_float / scale_i8 + shift_i8), limits.min, limits.max
+    ).astype(dtype)
     img_det_quant = img_det_quant[None, ...]  # add batch dim
 
     # inference
@@ -276,11 +280,20 @@ def yolo26(img_det, interpreter_detect, score_threshold, ratio, pad) -> list[Obj
     final_boxes[:, 0::2] *= w  # cx, w
     final_boxes[:, 1::2] *= h  # cy, h
 
-    # Convert to xmin, ymin, xmax, ymax
-    final_boxes[:, 0] -= final_boxes[:, 2] / 2  # xmin
-    final_boxes[:, 1] -= final_boxes[:, 3] / 2  # ymin
-    final_boxes[:, 0] += final_boxes[:, 2]  # xmax
-    final_boxes[:, 1] += final_boxes[:, 3]  # ymax
+    # This raw export needs class-aware NMS. OpenCV expects top-left xywh.
+    final_boxes[:, :2] -= final_boxes[:, 2:] / 2
+    keep = []
+    for class_id in np.unique(final_classes):
+        candidates = np.flatnonzero(final_classes == class_id)
+        indices = cv2.dnn.NMSBoxes(
+            final_boxes[candidates].tolist(), final_scores[candidates].tolist(),
+            score_threshold, 0.45,
+        )
+        keep.extend(candidates[np.asarray(indices, dtype=int).reshape(-1)].tolist())
+    final_boxes = final_boxes[keep]
+    final_scores = final_scores[keep]
+    final_classes = final_classes[keep]
+    final_boxes[:, 2:] += final_boxes[:, :2]
 
     # Adjust for padding and scaling from letterbox
     final_boxes[:, 0::2] -= pad[0]  # x padding

@@ -12,19 +12,21 @@ echo "Downloading Coral EdgeTPU and LiteRT models into ${TARGET_DIR}..."
 download_file() {
     local url="$1"
     local filename="$2"
-    if [ -f "${filename}" ]; then
+    if [ -s "${filename}" ]; then
         echo " -> ${filename} already exists, skipping."
         return 0
     fi
     echo " -> Downloading ${filename}..."
     if command -v curl >/dev/null 2>&1; then
-        curl -fSL -o "${filename}" "${url}"
+        curl -fSL --retry 3 --connect-timeout 15 --max-time 300 -o "${filename}.part" "${url}"
     elif command -v wget >/dev/null 2>&1; then
-        wget -q --show-progress -O "${filename}" "${url}"
+        wget -q --show-progress --timeout=30 --tries=3 -O "${filename}.part" "${url}"
     else
         echo "Error: curl or wget is required." >&2
         exit 1
     fi
+    test -s "${filename}.part"
+    mv "${filename}.part" "${filename}"
 }
 
 # 1. Labels
@@ -38,7 +40,7 @@ download_file "https://raw.githubusercontent.com/google-coral/test_data/master/m
 # 3. LiteRT / CPU Models (RPi5 / PC)
 download_file "https://raw.githubusercontent.com/google-coral/test_data/master/ssdlite_mobiledet_coco_qat_postprocess.tflite" "ssdlite_mobiledet_coco_qat_postprocess.tflite"
 download_file "https://raw.githubusercontent.com/google-coral/test_data/master/mobilenet_v2_1.0_224_inat_bird_quant.tflite" "mobilenet_v2_1.0_224_inat_bird_quant.tflite"
-# YOLO26 / Custom YOLO models (Requires HuggingFace authentication or custom host)
-# download_file "https://huggingface.co/EdgeFirst/yolo26-det/resolve/main/yolo26n-det-int8.tflite" "yolo26n-det-int8.tflite"
+# Generic TFLite export; hardware-specific exports are not CPU compatible.
+download_file "https://huggingface.co/EdgeFirst/yolo26-det/resolve/1f764994a8805b5531c04c34dd4d7ded8a3bc864/tflite/yolo26n-det-int8.tflite" "yolo26n-det-int8.tflite"
 
 echo "Model downloads complete."

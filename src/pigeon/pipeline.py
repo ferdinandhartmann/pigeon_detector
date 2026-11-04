@@ -370,40 +370,45 @@ class PigeonPipeline:
         crops_classified = 0
         for obj in objs:
             label_name = self.labels_coco.get(obj.id, str(obj.id))
-            if label_name != "bird":
-                continue
-
             x0 = max(0, int(obj.bbox.xmin))
             y0 = max(0, int(obj.bbox.ymin))
-            x1 = min(orig_w, int(obj.bbox.xmax))
-            y1 = min(orig_h, int(obj.bbox.ymax))
-
-            img_bird = frame_rgb[y0:y1, x0:x1, :]
-            if img_bird.size == 0:
+            x1 = min(orig_w - 1, int(obj.bbox.xmax))
+            y1 = min(orig_h - 1, int(obj.bbox.ymax))
+            if x1 <= x0 or y1 <= y0:
                 continue
 
-            t_cls0 = time.perf_counter()
-            bird_classes = self.engine_pigeon.classify(
-                img_bird, top_k=self.top_k, threshold=self.score_threshold
-            )
-            classify_ms += (time.perf_counter() - t_cls0) * 1000.0
-            crops_classified += 1
-
-            if not bird_classes:
-                continue
-
-            bird_top_1 = self.labels_bird.get(bird_classes[0].id, str(bird_classes[0].id))
-            if "Dove" in bird_top_1 or "Pigeon" in bird_top_1:
-                self.metrics.pigeons_detected += 1
-                self.on_pigeon_detected()
+            lines = [f"{label_name} | det {obj.score:.1%}"]
+            color = (255, 180, 0)
+            if label_name == "bird":
+                img_bird = frame_rgb[y0:y1, x0:x1, :]
+                t_cls0 = time.perf_counter()
+                # Show even uncertain species predictions, but keep the action threshold.
+                bird_classes = self.engine_pigeon.classify(
+                    img_bird, top_k=self.top_k, threshold=0.0
+                )
+                classify_ms += (time.perf_counter() - t_cls0) * 1000.0
+                crops_classified += 1
+                color = (0, 200, 255)
+                if not bird_classes:
+                    lines.append("species: unknown")
+                for c in bird_classes:
+                    bird_label = self.labels_bird.get(c.id, str(c.id))
+                    suffix = " (below threshold)" if c.score < self.score_threshold else ""
+                    lines.append(f"{bird_label} | cls {c.score:.1%}{suffix}")
+                    log.debug(f"Frame {frame_idx:06d}: {bird_label} ({c.score:.3f})")
+                if bird_classes:
+                    top = bird_classes[0]
+                    bird_top_1 = self.labels_bird.get(top.id, str(top.id))
+                    if top.score >= self.score_threshold and (
+                        "Dove" in bird_top_1 or "Pigeon" in bird_top_1
+                    ):
+                        color = (0, 255, 0)
+                        self.metrics.pigeons_detected += 1
+                        self.on_pigeon_detected()
 
             t_draw0 = time.perf_counter()
-            draw_detection(frame_bgr, x0, y0, x1, y1, bird_top_1)
+            draw_detection(frame_bgr, x0, y0, x1, y1, "\n".join(lines), color=color)
             draw_ms += (time.perf_counter() - t_draw0) * 1000.0
-
-            for c in bird_classes:
-                bird_label = self.labels_bird.get(c.id, str(c.id))
-                log.debug(f"Frame {frame_idx:06d}: {bird_label} ({c.score:.3f})")
 
         t_end = time.perf_counter()
         proc_time = t_end - t_start

@@ -31,7 +31,7 @@ def parse_args():
         "-v", "--verbose", type=int, default=1, help="Verbosity: 0 (warnings), 1 (info), 2 (debug)"
     )
     parser.add_argument(
-        "-t", "--threshold", type=float, default=0.5, help="Score threshold for detections"
+        "-t", "--threshold", type=float, default=0.35, help="Score threshold for detections"
     )
     parser.add_argument(
         "-k", "--top_k", type=int, default=2, help="Max number of classification results"
@@ -165,7 +165,6 @@ def main():
                     [
                         "data/models/ssdlite_mobiledet_coco_qat_postprocess.tflite",
                         "models/ssdlite_mobiledet_coco_qat_postprocess.tflite",
-                        "data/models/ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite",
                     ]
                 )
             elif args.detector == "yolov7":
@@ -196,8 +195,15 @@ def main():
                 [
                     "data/models/mobilenet_v2_1.0_224_inat_bird_quant.tflite",
                     "models/mobilenet_v2_1.0_224_inat_bird_quant.tflite",
-                    "data/models/mobilenet_v2_1.0_224_inat_bird_quant_edgetpu.tflite",
                 ]
+            )
+
+    for path in (args.model_detect, args.model_pigeon, args.labels_coco, args.labels_bird):
+        if not os.path.isfile(path):
+            raise SystemExit(
+                f"Missing model or labels: {path}\n"
+                "Run bash data/models/download.sh from the project root, "
+                "or supply explicit model/label paths."
             )
 
     # Instantiate engines
@@ -235,6 +241,13 @@ def main():
 
     if args.benchmark or args.verbose >= 1:
         print(metrics.summary())
+    if args.benchmark:
+        import resource
+        import sys
+
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        divisor = 1024 * 1024 if sys.platform == "darwin" else 1024
+        print(f" Peak process memory (RSS): {peak / divisor:.1f} MiB")
 
 
 if __name__ == "__main__":

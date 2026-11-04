@@ -73,17 +73,21 @@ class TFLiteEngine(InferenceEngine):
         input_detail = self.input_details[0]
         output_detail = self.output_details[0]
 
+        # Coral iNaturalist MobileNet uses (RGB - 128) / 128 normalization.
+        # https://github.com/google-coral/pycoral/blob/master/examples/classify_image.py
         input_dtype = input_detail["dtype"]
         img_tensor: np.ndarray
         if input_dtype == np.float32:
-            img_tensor = img_scaled.astype(np.float32) / 255.0
+            img_tensor = (img_scaled.astype(np.float32) - 128.0) / 128.0
         elif input_dtype in (np.int8, np.uint8):
             # Quantize if scale is present
             quant_params = input_detail.get("quantization", (0.0, 0))
             if isinstance(quant_params, tuple) and quant_params[0] != 0.0:
                 scale, zp = quant_params
-                img_tensor = np.array(
-                    (img_scaled.astype(np.float32) / 255.0) / scale + zp, dtype=input_dtype
+                normalized = (img_scaled.astype(np.float32) - 128.0) / 128.0
+                limits = np.iinfo(input_dtype)
+                img_tensor = np.clip(normalized / scale + zp, limits.min, limits.max).astype(
+                    input_dtype
                 )
             else:
                 img_tensor = img_scaled.astype(input_dtype)

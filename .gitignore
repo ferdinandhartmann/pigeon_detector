@@ -16,3 +16,7 @@ data/testdata/pigeons/*
 data/testdata/output/
 !data/models/download.sh
 !data/testdata/download.sh
+
+.venv/
+data/models/*.part
+data/testdata/pigeons/*.part

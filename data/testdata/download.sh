@@ -13,7 +13,6 @@ declare -a IMAGES=(
     "pigeon_000.jpg https://upload.wikimedia.org/wikipedia/commons/1/13/Columba_livia_-_01.jpg"
     "pigeon_001.jpg https://upload.wikimedia.org/wikipedia/commons/e/e5/Columba_livia_Luc_Viatour.jpg"
     "pigeon_002.jpg https://upload.wikimedia.org/wikipedia/commons/2/2b/Rock_dove_-_natures_pics.jpg"
-    "pigeon_003.jpg https://upload.wikimedia.org/wikipedia/commons/0/03/Feral_pigeon_%28Columba_livia_domestica%29%2C_2017-05-27.jpg"
     "pigeon_004.jpg https://upload.wikimedia.org/wikipedia/commons/3/3c/Common_pigeon_at_Waterlow_Park%2C_London_01.jpg"
 )
 
@@ -28,27 +27,34 @@ for item in "${IMAGES[@]}"; do
     URL=$(echo "${item}" | awk '{print $2}')
     DEST_PATH="${TARGET_DIR}/${FILENAME}"
 
+    if [ -s "${DEST_PATH}" ]; then
+        echo " -> ${FILENAME} already exists, skipping."
+        SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+        continue
+    fi
     echo "Downloading ${FILENAME}..."
     if command -v curl >/dev/null 2>&1; then
-        if curl -fSL -A "${USER_AGENT}" "${URL}" -o "${DEST_PATH}" --retry 3; then
-            if [ -s "${DEST_PATH}" ]; then
+        if curl -fSL -A "${USER_AGENT}" "${URL}" -o "${DEST_PATH}.part" --retry 3 --connect-timeout 15 --max-time 120; then
+            if [ -s "${DEST_PATH}.part" ]; then
+                mv "${DEST_PATH}.part" "${DEST_PATH}"
                 echo " -> Saved ${FILENAME} ($(du -h "${DEST_PATH}" | cut -f1))"
                 SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
             else
                 echo " -> ERROR: Downloaded file ${FILENAME} is empty" >&2
-                rm -f "${DEST_PATH}"
+                rm -f "${DEST_PATH}.part"
             fi
         else
             echo " -> ERROR: Failed to download ${FILENAME} from ${URL}" >&2
         fi
     elif command -v wget >/dev/null 2>&1; then
-        if wget --user-agent="${USER_AGENT}" -q --show-progress -O "${DEST_PATH}" "${URL}"; then
-            if [ -s "${DEST_PATH}" ]; then
+        if wget --user-agent="${USER_AGENT}" -q --show-progress --timeout=30 --tries=3 -O "${DEST_PATH}.part" "${URL}"; then
+            if [ -s "${DEST_PATH}.part" ]; then
+                mv "${DEST_PATH}.part" "${DEST_PATH}"
                 echo " -> Saved ${FILENAME} ($(du -h "${DEST_PATH}" | cut -f1))"
                 SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
             else
                 echo " -> ERROR: Downloaded file ${FILENAME} is empty" >&2
-                rm -f "${DEST_PATH}"
+                rm -f "${DEST_PATH}.part"
             fi
         else
             echo " -> ERROR: Failed to download ${FILENAME} from ${URL}" >&2

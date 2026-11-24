@@ -42,5 +42,6 @@ download_file "https://raw.githubusercontent.com/google-coral/test_data/master/s
 download_file "https://raw.githubusercontent.com/google-coral/test_data/master/mobilenet_v2_1.0_224_inat_bird_quant.tflite" "mobilenet_v2_1.0_224_inat_bird_quant.tflite"
 # Generic TFLite export; hardware-specific exports are not CPU compatible.
 download_file "https://huggingface.co/EdgeFirst/yolo26-det/resolve/1f764994a8805b5531c04c34dd4d7ded8a3bc864/tflite/yolo26n-det-int8.tflite" "yolo26n-det-int8.tflite"
+download_file "https://huggingface.co/EdgeFirst/yolo26-det/resolve/d58527c5d0320fac24b04c0d94fbb7304878ea6e/tflite/yolo26m-det-int8.tflite" "yolo26m-det-int8.tflite"
 
 echo "Model downloads complete."

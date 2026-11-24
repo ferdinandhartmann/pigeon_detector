@@ -237,6 +237,23 @@ def yolo26(img_det, interpreter_detect, score_threshold, ratio, pad) -> list[Obj
     interpreter_detect.set_tensor(input_details[0]["index"], img_det_quant)
     interpreter_detect.invoke()
 
+    if len(output_details) == 1:
+        detail = output_details[0]
+        rows = interpreter_detect.get_tensor(detail["index"])[0].astype(np.float32)
+        if rows.ndim != 2 or rows.shape[1] != 6:
+            raise ValueError("Expected YOLO26 end-to-end rows [x0,y0,x1,y1,score,class]")
+        scale, zero = detail["quantization"]
+        if scale:
+            rows = (rows - zero) * scale
+        height, width = img_det.shape[:2]
+        objects = []
+        for x, y, right, bottom, score, cls in rows:
+            if score >= score_threshold:
+                box = (np.array([x * width, y * height, right * width, bottom * height])
+                       - np.tile(pad, 2)) / ratio
+                objects.append(Object(int(round(cls)), score, BBox(*box)))
+        return objects
+
     # The model card says two outputs: boxes and scores.
     # We determine which is which by checking the shape.
     if output_details[0]["shape"][1] == 4:  # boxes

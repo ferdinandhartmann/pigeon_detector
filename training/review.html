@@ -1,0 +1,37 @@
+<!doctype html><meta charset="utf-8"><title>Bird capture review</title>
+<style>body{font:16px system-ui;margin:2em;background:#192120;color:white}canvas{display:block;max-width:100%;max-height:70vh;touch-action:none;margin:1em 0}button,select{padding:.55em}output{margin:1em}</style>
+<h1>Review captures</h1><button id="prev">Previous</button> <button id="next">Next</button> <output id="status"></output>
+<canvas id="cv"></canvas>
+<select id="label"><option>Other bird</option><option>Pigeon/Dove</option><option selected>Uncertain</option></select>
+<button id="del">Delete selected box</button> <button id="save">Review complete</button>
+<p>Drag on empty space to add a box. Drag a box to move it or drag its lower-right corner to resize. Red suggestions need a bird label or deletion.</p>
+<script type="module">
+const ids=await (await fetch('/records')).json(), ctx=cv.getContext('2d');
+let i=0, boxes=[], selected=-1, img, drag, dirty=false;
+async function load(n){
+ if(n<0||n>=ids.length||dirty&&!confirm('Discard unsaved edits?'))return;
+ const d=await (await fetch('/files/'+encodeURIComponent(ids[n])+'.json',{cache:'no-store'})).json();
+ const photo=new Image();photo.src='/files/'+encodeURIComponent(d.image);await photo.decode();
+ i=n;img=photo;boxes=d.boxes;selected=-1;dirty=false;cv.width=img.width;cv.height=img.height;
+ statusText(d.reviewed?'Reviewed':'Pending');draw()
+}
+function statusText(s){document.querySelector('output').textContent=(i+1)+' / '+ids.length+' · '+s}
+function draw(){ctx.drawImage(img,0,0);boxes.forEach(([x,y,r,b,c],k)=>{
+ ctx.strokeStyle=c<0?'red':k===selected?'yellow':'lime';ctx.fillStyle=ctx.strokeStyle;
+ ctx.lineWidth=2;ctx.strokeRect(x,y,r-x,b-y);ctx.fillRect(r-4,b-4,8,8);
+ ctx.fillText(label.options[c]?.text||'Non-bird suggestion',x,y+12)})}
+function pos(e){let r=cv.getBoundingClientRect();return [Math.max(0,Math.min(cv.width,(e.clientX-r.left)*cv.width/r.width)),Math.max(0,Math.min(cv.height,(e.clientY-r.top)*cv.height/r.height))]}
+cv.onpointerdown=e=>{cv.setPointerCapture(e.pointerId);let [x,y]=pos(e);
+ selected=boxes.findLastIndex(([a,b,c,d])=>x>=a&&x<=c+4&&y>=b&&y<=d+4);
+ let fresh=selected<0;if(fresh){selected=boxes.push([x,y,x,y,label.selectedIndex<0?2:label.selectedIndex])-1;dirty=true}
+ let box=boxes[selected];label.selectedIndex=box[4];drag={x,y,box:[...box],mode:fresh?'new':Math.abs(x-box[2])<10&&Math.abs(y-box[3])<10?'resize':'move'};draw()}
+cv.onpointermove=e=>{if(!drag)return;let [x,y]=pos(e),[a,b,c,d,k]=drag.box;
+ if(drag.mode==='move'){let dx=Math.max(-a,Math.min(cv.width-c,x-drag.x)),dy=Math.max(-b,Math.min(cv.height-d,y-drag.y));boxes[selected]=[a+dx,b+dy,c+dx,d+dy,k]}
+ else boxes[selected]=[Math.min(a,x),Math.min(b,y),Math.max(a,x),Math.max(b,y),k];
+ dirty=true;draw()}
+cv.onpointerup=cv.onpointercancel=()=>{drag=null};
+label.onchange=()=>{if(selected>=0){boxes[selected][4]=label.selectedIndex;dirty=true;draw()}};
+del.onclick=()=>{if(selected>=0){boxes.splice(selected,1);selected=-1;dirty=true;draw()}};
+save.onclick=async()=>{if(!img)return;let r=await fetch('/save/'+encodeURIComponent(ids[i]),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({boxes})});statusText(await r.text());if(r.ok)dirty=false};
+prev.onclick=()=>load(i-1);next.onclick=()=>load(i+1);if(ids.length)load(0);else document.querySelector('output').textContent='Import captures first';
+</script>

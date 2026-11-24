@@ -1,37 +1,236 @@
 <!doctype html><meta charset="utf-8"><title>Bird capture review</title>
-<style>body{font:16px system-ui;margin:2em;background:#192120;color:white}canvas{display:block;max-width:100%;max-height:70vh;touch-action:none;margin:1em 0}button,select{padding:.55em}output{margin:1em}</style>
-<h1>Review captures</h1><button id="prev">Previous</button> <button id="next">Next</button> <output id="status"></output>
-<canvas id="cv"></canvas>
-<select id="label"><option>Other bird</option><option>Pigeon/Dove</option><option selected>Uncertain</option></select>
-<button id="del">Delete selected box</button> <button id="save">Review complete</button>
-<p>Drag on empty space to add a box. Drag a box to move it or drag its lower-right corner to resize. Red suggestions need a bird label or deletion.</p>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+*{box-sizing:border-box}
+body{font:16px/1.45 system-ui;margin:0 auto;padding:1rem;max-width:1400px;background:#192120;color:#edf5f1}
+h1{font-size:1.5rem;margin:0 0 .6rem}
+.toolbar,.controls,fieldset{display:flex;align-items:center;flex-wrap:wrap;gap:.65rem}
+button,fieldset{background:#293532;color:inherit;border:1px solid #51635d;border-radius:.5rem;padding:.5rem .8rem}
+button{font:inherit;cursor:pointer}
+button:hover{background:#374943}
+#save{background:#b9edca;color:#13251b}
+#viewport{height:60vh;overflow:auto;display:flex;background:#0d1211;border-radius:.5rem;margin:.7rem 0;outline-offset:2px}
+canvas{display:block;flex:none;margin:auto;touch-action:none;cursor:crosshair}
+fieldset{margin:0}
+fieldset label{border-bottom:3px solid var(--box);padding:.15rem .25rem;cursor:pointer}
+p{color:#bdccc6}
+</style>
+<h1>Review captures</h1><div class="toolbar"><button id="prev">Previous</button> <button id="next">Next</button>
+<button id="save">Review complete</button> <button id="delete-image" disabled>Delete image…</button>
+<label><input id="hide-reviewed" type="checkbox" checked> Hide reviewed</label>
+<output id="review-count" aria-live="polite"></output><output id="status"></output>
+<span id="edit-state" role="status" style="color:orange" hidden>Modified · Not saved</span>
+</div>
+<div id="viewport" tabindex="0" aria-label="Capture image and bounding boxes"><canvas id="cv"></canvas></div>
+<div class="controls">
+<fieldset id="labels"><legend>Box label</legend>
+<label><input type="radio" name="box-label" value="0"> Other bird</label>
+<label><input type="radio" name="box-label" value="1"> Pigeon/Dove</label>
+<label><input type="radio" name="box-label" value="2" checked> Uncertain</label>
+</fieldset>
+<button id="del">Delete selected box</button></div>
+<p>Scroll over the image to zoom. Press A for the previous label or S for the next. With no box selected, Left and Right open the previous and next captures. With a box selected, arrow keys move it one image pixel. Delete removes the selected box. With no box selected, Delete asks you to confirm image deletion. Drag on empty space to add a box. Drag a box to move it or drag its lower-right corner to resize. Orange suggestions need a bird label or deletion.</p>
 <script type="module">
-const ids=await (await fetch('/records')).json(), ctx=cv.getContext('2d');
-let i=0, boxes=[], selected=-1, img, drag, dirty=false;
-async function load(n){
- if(n<0||n>=ids.length||dirty&&!confirm('Discard unsaved edits?'))return;
- const d=await (await fetch('/files/'+encodeURIComponent(ids[n])+'.json',{cache:'no-store'})).json();
- const photo=new Image();photo.src='/files/'+encodeURIComponent(d.image);await photo.decode();
- i=n;img=photo;boxes=d.boxes;selected=-1;dirty=false;cv.width=img.width;cv.height=img.height;
- statusText(d.reviewed?'Reviewed':'Pending');draw()
+const records=await (await fetch('/records?include_status=1')).json(), ctx=cv.getContext('2d');
+const deleteImage=document.querySelector('#delete-image');
+const hideReviewed=document.querySelector('#hide-reviewed');
+const status=document.querySelector('#status');
+const labelOptions=[...document.querySelectorAll('input[name="box-label"]')];
+const labelNames=labelOptions.map(option=>option.labels[0].textContent.trim());
+let visible=[], i=0, boxes=[], selected=-1, img, drag, dirty=false, loading=false;
+const viewport=document.querySelector('#viewport');
+const colors=['#56cfff','#ff84c3','#f3ed79'];
+labelOptions.forEach((option,index)=>option.labels[0].style.setProperty('--box',colors[index]));
+let zoom=1;
+function sizeImage(){
+ if(!img)return;
+ const scale=Math.min(1,viewport.offsetWidth/img.width,viewport.offsetHeight/img.height);
+ cv.style.width=img.width*scale*zoom+'px';
+ cv.style.height=img.height*scale*zoom+'px';
 }
-function statusText(s){document.querySelector('output').textContent=(i+1)+' / '+ids.length+' · '+s}
+new ResizeObserver(sizeImage).observe(viewport);
+viewport.addEventListener('wheel',e=>{
+ if(!img)return;
+ e.preventDefault();
+ if(drag||!e.deltaY)return;
+ const before=cv.getBoundingClientRect();
+ const x=Math.max(0,Math.min(1,(e.clientX-before.left)/before.width));
+ const y=Math.max(0,Math.min(1,(e.clientY-before.top)/before.height));
+ const next=Math.max(1,Math.min(12,zoom*Math.exp(-e.deltaY*(e.deltaMode===0 ? 0.002 : 0.06))));
+ if(next===zoom)return;
+ zoom=next;sizeImage();
+ const after=cv.getBoundingClientRect();
+ viewport.scrollLeft+=after.left+x*after.width-(before.left+x*before.width);
+ viewport.scrollTop+=after.top+y*after.height-(before.top+y*before.height);
+},{passive:false});
+const editState=document.querySelector('#edit-state');
+function setDirty(value){
+ dirty=value;
+ editState.hidden=!value;
+}
+function updateCount(){
+ const count=records.filter(record=>record.reviewed).length;
+ document.querySelector('#review-count').textContent=`${count} / ${records.length} reviewed`;
+}
+function updateList(){
+ updateCount();
+ visible=hideReviewed.checked?records.filter(record=>!record.reviewed):records;
+}
+async function load(n){
+ if(loading||save.disabled||drag||n<0||n>=visible.length||dirty&&!confirm('Discard unsaved edits?'))return;
+ loading=true;deleteImage.disabled=true;
+ try{
+  const response=await fetch('/files/'+encodeURIComponent(visible[n].id)+'.json',{cache:'no-store'});
+  if(!response.ok)throw new Error('Capture unavailable');
+  const d=await response.json();
+  const photo=new Image();photo.src='/files/'+encodeURIComponent(d.image);await photo.decode();
+  i=n;img=photo;boxes=d.boxes;selected=-1;setDirty(false);cv.width=img.width;cv.height=img.height;zoom=1;sizeImage();viewport.scrollTo(0,0);
+  statusText(d.reviewed?'Reviewed':'Pending');draw();
+ }catch{
+  status.textContent='Could not load the capture. Try again.';
+ }finally{
+  loading=false;deleteImage.disabled=!img;
+ }
+}
+function statusText(s){status.textContent=(i+1)+' / '+visible.length+' · '+s}
+function clearCapture(){
+ deleteImage.disabled=true;img=null;boxes=[];selected=-1;i=0;setDirty(false);
+ ctx.clearRect(0,0,cv.width,cv.height);
+}
+function showList(n){
+ clearCapture();
+ if(visible.length)load(Math.min(n,visible.length-1));
+ else status.textContent=records.length?'All captures reviewed':'Import captures first';
+}
 function draw(){ctx.drawImage(img,0,0);boxes.forEach(([x,y,r,b,c],k)=>{
- ctx.strokeStyle=c<0?'red':k===selected?'yellow':'lime';ctx.fillStyle=ctx.strokeStyle;
- ctx.lineWidth=2;ctx.strokeRect(x,y,r-x,b-y);ctx.fillRect(r-4,b-4,8,8);
- ctx.fillText(label.options[c]?.text||'Non-bird suggestion',x,y+12)})}
+ const active=k===selected;
+ if(active){ctx.strokeStyle='#101614';ctx.lineWidth=6;ctx.strokeRect(x,y,r-x,b-y)}
+ ctx.strokeStyle=colors[c]||'orange';ctx.fillStyle=ctx.strokeStyle;
+ ctx.lineWidth=active?3:2;ctx.strokeRect(x,y,r-x,b-y);ctx.fillRect(r-4,b-4,8,8);
+ ctx.fillText(labelNames[c]||'Non-bird suggestion',x,y+12)})}
 function pos(e){let r=cv.getBoundingClientRect();return [Math.max(0,Math.min(cv.width,(e.clientX-r.left)*cv.width/r.width)),Math.max(0,Math.min(cv.height,(e.clientY-r.top)*cv.height/r.height))]}
-cv.onpointerdown=e=>{cv.setPointerCapture(e.pointerId);let [x,y]=pos(e);
+cv.onpointerdown=e=>{if(!img||loading)return;viewport.focus({preventScroll:true});cv.setPointerCapture(e.pointerId);let [x,y]=pos(e);
  selected=boxes.findLastIndex(([a,b,c,d])=>x>=a&&x<=c+4&&y>=b&&y<=d+4);
- let fresh=selected<0;if(fresh){selected=boxes.push([x,y,x,y,label.selectedIndex<0?2:label.selectedIndex])-1;dirty=true}
- let box=boxes[selected];label.selectedIndex=box[4];drag={x,y,box:[...box],mode:fresh?'new':Math.abs(x-box[2])<10&&Math.abs(y-box[3])<10?'resize':'move'};draw()}
+ let fresh=selected<0;if(fresh){
+  const option=labelOptions.find(option=>option.checked);
+  selected=boxes.push([x,y,x,y,option ? Number(option.value) : 2])-1;
+ }
+ let box=boxes[selected];labelOptions.forEach((option,index)=>{option.checked=index===box[4]});drag={x,y,box:[...box],mode:fresh?'new':Math.abs(x-box[2])<10&&Math.abs(y-box[3])<10?'resize':'move'};draw()}
 cv.onpointermove=e=>{if(!drag)return;let [x,y]=pos(e),[a,b,c,d,k]=drag.box;
  if(drag.mode==='move'){let dx=Math.max(-a,Math.min(cv.width-c,x-drag.x)),dy=Math.max(-b,Math.min(cv.height-d,y-drag.y));boxes[selected]=[a+dx,b+dy,c+dx,d+dy,k]}
  else boxes[selected]=[Math.min(a,x),Math.min(b,y),Math.max(a,x),Math.max(b,y),k];
- dirty=true;draw()}
-cv.onpointerup=cv.onpointercancel=()=>{drag=null};
-label.onchange=()=>{if(selected>=0){boxes[selected][4]=label.selectedIndex;dirty=true;draw()}};
-del.onclick=()=>{if(selected>=0){boxes.splice(selected,1);selected=-1;dirty=true;draw()}};
-save.onclick=async()=>{if(!img)return;let r=await fetch('/save/'+encodeURIComponent(ids[i]),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({boxes})});statusText(await r.text());if(r.ok)dirty=false};
-prev.onclick=()=>load(i-1);next.onclick=()=>load(i+1);if(ids.length)load(0);else document.querySelector('output').textContent='Import captures first';
+ draw()}
+cv.onpointerup=cv.onpointercancel=()=>{
+ if(!drag)return;
+ const box=boxes[selected],[x,y,r,b]=box;
+ if(x===r||y===b){
+  if(drag.mode==='new'){boxes.pop();selected=-1}
+  else boxes[selected]=drag.box;
+ }else if(drag.mode==='new'||box.some((value,index)=>value!==drag.box[index])){
+  setDirty(true);
+ }
+ drag=null;draw()
+};
+document.querySelector('#labels').onchange=e=>{
+ if(selected>=0){boxes[selected][4]=Number(e.target.value);setDirty(true);draw()}
+};
+function deleteSelected(){
+ if(selected<0||drag)return;
+ boxes.splice(selected,1);selected=-1;setDirty(true);draw()
+}
+del.onclick=deleteSelected;
+document.addEventListener('keydown',e=>{
+ const key=e.key.toLowerCase();
+ if(key==='a'||key==='s'){
+  if(!img||drag||loading||save.disabled||e.altKey||e.ctrlKey||e.metaKey||e.isComposing)return;
+  e.preventDefault();
+  const count=labelOptions.length;
+  const current=labelOptions.findIndex(option=>option.checked);
+  const next=key==='s'?(current+1)%count:((current<0?0:current)-1+count)%count;
+  labelOptions[next].click();
+  return;
+ }
+ const steps={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
+ if(steps[e.key]&&!drag&&!loading&&!e.altKey&&!e.ctrlKey&&!e.metaKey&&!e.target.matches('input,select,textarea')){
+  const [sx,sy]=steps[e.key];
+  if(selected<0){
+   if(sx){e.preventDefault();load(i+sx)}
+   return;
+  }
+  e.preventDefault();
+  const [x,y,r,b,label]=boxes[selected];
+  const dx=Math.max(-x,Math.min(cv.width-r,sx)),dy=Math.max(-y,Math.min(cv.height-b,sy));
+  if(dx||dy){boxes[selected]=[x+dx,y+dy,r+dx,b+dy,label];setDirty(true);draw()}
+ }
+ if(e.key==='Delete'&&!drag&&!loading&&!e.altKey&&!e.ctrlKey&&!e.metaKey){
+  e.preventDefault();
+  if(e.repeat)return;
+  if(selected>=0)deleteSelected();
+  else deleteImage.click();
+ }
+});
+deleteImage.onclick=async()=>{
+ if(!img||loading||save.disabled||drag)return;
+ const record=visible[i];
+ if(!confirm(`Delete "${record.id}" and its annotations from the review workspace?`))return;
+ loading=true;deleteImage.disabled=true;
+ try{
+  const response=await fetch('/records/'+encodeURIComponent(record.id),{method:'DELETE'});
+  if(!response.ok){
+   const detail=await response.json().catch(()=>null);
+   const restart='Restart the reviewer in your terminal, then refresh this page.';
+   status.textContent=detail?.error||([404,405].includes(response.status)?restart:`Image deletion failed (HTTP ${response.status}).`);
+   return;
+  }
+ }catch{
+  status.textContent='Could not reach the reviewer. Check that the review command is running.';
+  return;
+ }finally{
+  loading=false;deleteImage.disabled=false;
+ }
+ records.splice(records.indexOf(record),1);
+ updateList();showList(i);
+};
+save.onclick=async()=>{
+ if(!img||drag||loading||save.disabled)return;
+ const invalid=boxes.findIndex(([x,y,r,b,c])=>!(x>=0&&x<r&&r<=cv.width&&y>=0&&y<b&&b<=cv.height&&[0,1,2].includes(c)));
+ if(invalid>=0){
+  selected=invalid;
+  labelOptions.forEach((option,index)=>{option.checked=index===boxes[selected][4]});
+  draw();statusText('Label, resize, or delete the highlighted box before saving.');return;
+ }
+ save.disabled=true;
+ let advance=false;
+ try{
+  const record=visible[i];
+  const snapshot=JSON.stringify({boxes});
+  const response=await fetch('/save/'+encodeURIComponent(record.id),{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});
+  if(response.ok){
+   record.reviewed=true;
+   if(snapshot===JSON.stringify({boxes})&&!drag){setDirty(false);advance=true}
+  }
+  statusText(response.ok?(dirty?'Saved. You have newer unsaved edits.':'Saved'):'Save failed. Check the highlighted boxes or restart the reviewer.');
+ }catch{
+  statusText('Could not reach the reviewer. Check that it is running and try again.');
+ }finally{
+  save.disabled=false;
+ }
+ if(advance){
+  updateList();
+  if(hideReviewed.checked)showList(i);
+  else load(i+1);
+ }else{
+  updateCount();
+ }
+};
+hideReviewed.onchange=()=>{
+ if(loading||save.disabled||drag||dirty&&!confirm('Discard unsaved edits?')){
+  hideReviewed.checked=!hideReviewed.checked;return;
+ }
+ const current=visible[i];
+ updateList();
+ showList(Math.max(0,visible.indexOf(current)));
+};
+prev.onclick=()=>load(i-1);next.onclick=()=>load(i+1);
+updateList();showList(0);
 </script>

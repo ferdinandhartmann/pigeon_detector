@@ -1,0 +1,17 @@
+detector:
+  model: yolo26s.pt
+  epochs: 25
+  device: 0
+  batch: 4
+  imgsz: 640
+  # Additional Ultralytics training options can go here.
+
+classifier:
+  model: MobileNetV2
+  weights: imagenet
+  train_backbone: false
+  require_gpu: true
+  epochs: 25
+  batch_size: 16
+  image_size: [224, 224]
+  optimizer: adam
